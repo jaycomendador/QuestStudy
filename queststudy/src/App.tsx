@@ -1,53 +1,449 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { BookOpen, Check, CheckCircle2, ChevronDown, Clock3, Coins, Compass, Flame, Gamepad2, Home, LogOut, Menu, Plus, Search, Settings, Shield, ShoppingBag, Sparkles, Swords, Target, Timer, Trash2, Trophy, UserRound, X, Zap } from 'lucide-react'
+import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { BookOpen, Check, CheckCircle2, ChevronDown, Clock3, Coins, Compass, Flame, Gamepad2, Home, LogOut, Menu, Pencil, Plus, Search, Settings, Shield, ShoppingBag, Sparkles, Swords, Target, Timer, Trash2, Trophy, UserRound, X, Zap } from 'lucide-react'
+import { supabase } from './lib/supabase'
+import { cancelFocus, completeFocus, completeQuest as completeQuestInDb, createQuizQuestion as createQuizQuestionInDb, createQuest as createQuestInDb, deleteQuest as deleteQuestInDb, equipAvatar, getDailyQuestion, loadUserData, purchaseAvatar, saveProfile, startFocus, submitQuizAnswer, updateQuest as updateQuestInDb } from './services/studyService'
+import type { Difficulty, QuizQuestion, Quest, UserData } from './types'
 import './App.css'
 
-type Quest = { id: string; title: string; subject: string; difficulty: 'Easy'|'Medium'|'Hard'; due: string; done: boolean }
-type UserData = { name: string; xp: number; coins: number; streak: number; quests: Quest[]; inventory: string[]; equipped: string; sessions: number; quizBest: number }
-const seed: UserData = { name: 'Alex Morgan', xp: 1240, coins: 320, streak: 7, sessions: 12, quizBest: 92, equipped: '✦', inventory: ['✦','🌙'], quests: [
-  {id:'q1',title:'Review cellular respiration',subject:'Biology',difficulty:'Hard',due:'Today',done:false}, {id:'q2',title:'Complete chapter 6 exercises',subject:'Mathematics',difficulty:'Medium',due:'Today',done:false}, {id:'q3',title:'Read 20 pages of The Odyssey',subject:'Literature',difficulty:'Easy',due:'Tomorrow',done:false}, {id:'q4',title:'Prepare history flashcards',subject:'History',difficulty:'Medium',due:'Nov 28',done:true},
-] }
-const nav = [{to:'/',label:'Dashboard',icon:Home},{to:'/quests',label:'Quest board',icon:Compass},{to:'/subjects',label:'Subjects',icon:BookOpen},{to:'/quiz',label:'Quiz arena',icon:Gamepad2},{to:'/achievements',label:'Achievements',icon:Trophy},{to:'/shop',label:'Avatar shop',icon:ShoppingBag},{to:'/profile',label:'Profile & settings',icon:UserRound}]
-const subjects = [{name:'Mathematics',color:'#a18aff',icon:'∑',quests:8,progress:68},{name:'Biology',color:'#65d8a7',icon:'⚛',quests:6,progress:42},{name:'Literature',color:'#ffbc70',icon:'✎',quests:4,progress:82},{name:'History',color:'#79adff',icon:'⌛',quests:5,progress:54}]
-const rewards = [{name:'Moonlight aura',emoji:'🌙',price:200},{name:'Golden crown',emoji:'👑',price:450},{name:'Little dragon',emoji:'🐉',price:300},{name:'Star trail',emoji:'💫',price:150}]
-const supabase: SupabaseClient | null = import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY ? createClient(import.meta.env.VITE_SUPABASE_URL,import.meta.env.VITE_SUPABASE_ANON_KEY) : null
-function getStored(): UserData { try { const d=localStorage.getItem('queststudy-data'); return d?{...seed,...JSON.parse(d)}:seed } catch { return seed } }
-function App(){ return <BrowserRouter><StudyApp/></BrowserRouter> }
-function StudyApp(){
- const [data,setData]=useState<UserData>(getStored), [menu,setMenu]=useState(false), [modal,setModal]=useState(false), [toast,setToast]=useState(''), [session,setSession]=useState(false)
- const location=useLocation(), navigate=useNavigate()
- useEffect(()=>{localStorage.setItem('queststudy-data',JSON.stringify(data))},[data])
- useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),2600);return()=>clearTimeout(t)},[toast])
- const complete=(id:string)=>setData(d=>{const q=d.quests.find(x=>x.id===id);if(!q||q.done)return d;const xp=q.difficulty==='Easy'?25:q.difficulty==='Medium'?50:100;setToast(`Quest complete! +${xp} XP`);return {...d,xp:d.xp+xp,coins:d.coins+Math.round(xp/5),streak:Math.max(1,d.streak),quests:d.quests.map(x=>x.id===id?{...x,done:true}:x)}})
- const addQuest=(q:Omit<Quest,'id'|'done'>)=>{setData(d=>({...d,quests:[{...q,id:crypto.randomUUID(),done:false},...d.quests]}));setModal(false);setToast('Quest added to your board')}
- const removeQuest=(id:string)=>setData(d=>({...d,quests:d.quests.filter(q=>q.id!==id)}))
- const title=nav.find(n=>n.to===location.pathname)?.label??'Dashboard'
- return <div className="app-shell"><aside className={`sidebar ${menu?'open':''}`}><div className="brand"><span className="brand-icon"><Swords size={21}/></span><span>quest<span className="brand-accent">study</span></span></div><div className="side-label">YOUR SPACE</div><nav>{nav.map(n=><NavLink onClick={()=>setMenu(false)} key={n.to} to={n.to} className={({isActive})=>`nav-link ${isActive?'active':''}`}><n.icon size={18}/><span>{n.label}</span>{n.to==='/quests'&&<b className="nav-count">{data.quests.filter(q=>!q.done).length}</b>}</NavLink>)}</nav><div className="side-spacer"/><div className="sidebar-card"><div className="mini-shield"><Shield size={16}/></div><b>Keep your streak alive!</b><p>A little progress every day goes a long way.</p><div className="streak-mini"><Flame size={15}/>{data.streak} day streak</div></div><button className="nav-link signout" onClick={async()=>{if(supabase)await supabase.auth.signOut();setSession(false);setToast('Signed out')}}><LogOut size={18}/>Sign out</button><div className="side-user"><div className="avatar">{data.equipped}</div><div><b>{data.name}</b><small>Level {Math.floor(data.xp/500)+1} Scholar</small></div><ChevronDown size={16}/></div></aside>
- <main className="main"><header className="topbar"><button className="icon-button mobile-menu" onClick={()=>setMenu(!menu)} aria-label="Toggle navigation">{menu?<X/>:<Menu/>}</button><div className="crumb">My space <span>/</span> <b>{title}</b></div><div className="top-actions"><button className="icon-button" aria-label="Search" onClick={()=>navigate('/quests')}><Search size={18}/></button><button className="coin-pill" onClick={()=>navigate('/shop')}><Coins size={16}/>{data.coins} <span>coins</span></button><button className="profile-button" onClick={()=>navigate('/profile')}><div className="avatar small">{data.equipped}</div><span>{data.name.split(' ')[0]}</span></button></div></header><Routes><Route path="/" element={<Dashboard data={data} complete={complete} go={navigate}/>}/><Route path="/quests" element={<Quests data={data} complete={complete} remove={removeQuest} open={()=>setModal(true)}/>}/><Route path="/subjects" element={<Subjects data={data}/>}/><Route path="/quiz" element={<Quiz data={data} update={setData} toast={setToast}/>}/><Route path="/achievements" element={<Achievements data={data}/>}/><Route path="/shop" element={<Shop data={data} update={setData} toast={setToast}/>}/><Route path="/profile" element={<Profile data={data} update={setData} supabase={supabase} session={session} setSession={setSession} toast={setToast}/>}/><Route path="*" element={<Dashboard data={data} complete={complete} go={navigate}/>}/></Routes></main>
- {modal&&<QuestModal close={()=>setModal(false)} add={addQuest}/>} {toast&&<div className="toast"><CheckCircle2 size={18}/>{toast}</div>}</div>
+const emptyData: UserData = {
+  name: 'Scholar', xp: 0, coins: 0, streak: 0, quests: [], inventory: ['✦'], equipped: '✦',
+  sessions: 0, focusMinutes: 0, weeklyFocusMinutes: Array(7).fill(0), monthlyFocusMinutes: Array(4).fill(0),
+  quizBest: 0, quizCount: 0, completedTotal: 0, achievementIds: [], rewardedQuizIds: [], lastStudyDate: null, subjects: [], avatarCatalog: [],
 }
-function Heading({eyebrow,title,subtitle,action}:{eyebrow:string,title:React.ReactNode,subtitle:string,action?:React.ReactNode}){return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>}
-function Dashboard({data,complete,go}:{data:UserData,complete:(id:string)=>void,go:(path:string)=>void}){
- const [period,setPeriod]=useState<'week'|'month'>('week')
- const pending=data.quests.filter(q=>!q.done), pct=data.xp%500/5, week=period==='week'?[35,60,43,76,52,88,31]:[48,35,67,55,76,62,88]
- return <div className="content"><Heading eyebrow="TUESDAY, NOVEMBER 25, 2026" title={<>Ready for your next <span className="gradient-text">level up?</span></>} subtitle="Every quest you complete brings you closer to your goals." action={<button className="primary-button" onClick={()=>go('/quests')}><Plus size={17}/> New quest</button>}/><section className="hero-card"><div className="hero-copy"><div className="rank-tag"><Sparkles size={14}/> YOUR ADVENTURE CONTINUES</div><h2>Small steps.<br/><span>Epic progress.</span></h2><p>You’re on a roll, Alex. Keep the momentum going and make today count.</p><button className="hero-button" onClick={()=>go('/quests')}>View your quests <span>↗</span></button></div><div className="hero-art"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="planet">✦</div><div className="spark s1">✧</div><div className="spark s2">✦</div><div className="spark s3">✧</div><div className="hero-level"><span>LVL</span><b>{Math.floor(data.xp/500)+1}</b><small>SCHOLAR</small></div></div><div className="hero-footer"><div><span className="tiny-label">LEVEL {Math.floor(data.xp/500)+1} · SCHOLAR</span><strong>{data.xp.toLocaleString()} <small>XP</small></strong></div><div className="xp-track"><i style={{width:`${pct}%`}}/></div><div className="xp-next">{Math.ceil(data.xp/500)*500-data.xp} XP to next level</div></div></section>
- <div className="stats-grid"><Stat icon={<Zap/>} label="TOTAL XP" value={data.xp.toLocaleString()} note="+180 this week" color="purple"/><Stat icon={<Flame/>} label="DAY STREAK" value={`${data.streak} days`} note="Personal best: 12 days" color="orange"/><Stat icon={<CheckCircle2/>} label="QUESTS DONE" value={`${data.quests.filter(q=>q.done).length+23}`} note="You’re doing great!" color="green"/><Stat icon={<Clock3/>} label="FOCUS TIME" value="8.5 hrs" note="This week" color="blue"/></div>
- <div className="dashboard-grid"><section className="panel quests-panel"><div className="panel-head"><div><h3>Today’s quests</h3><p>Your next steps to greatness</p></div><button className="text-button" onClick={()=>go('/quests')}>View all <span>→</span></button></div><div className="quest-list">{pending.slice(0,3).map(q=><QuestRow key={q.id} quest={q} complete={complete}/>)}{pending.length===0&&<Empty text="All quests complete! Add one to keep growing."/>}</div><div className="daily-foot"><span><Target size={15}/> DAILY PROGRESS</span><b>{3-pending.slice(0,3).length}/{3} completed</b><div className="progress"><i style={{width:`${Math.max(5,(3-pending.slice(0,3).length)/3*100)}%`}}/></div></div></section><section className="panel week-panel"><div className="panel-head"><div><h3>Your study rhythm</h3><p>A little each day adds up</p></div><button className="period" onClick={()=>setPeriod(period==='week'?'month':'week')}>{period==='week'?'THIS WEEK':'THIS MONTH'} <ChevronDown size={13}/></button></div><div className="week-total"><b>{period==='week'?'8.5':'32.4'} <small>hrs</small></b><span className="positive">↗ 12.4%</span></div><div className="chart">{week.map((h,i)=><div className="chart-col" key={i}><div className="chart-value">{Math.round(h/10)/10}h</div><div className={`bar ${i===5?'today':''}`} style={{height:`${h}%`}}/><span>{period==='week'?['M','T','W','T','F','S','S'][i]:['1','5','10','15','20','25','30'][i]}</span></div>)}</div></section></div>
- <div className="bottom-grid"><section className="panel achievements-panel"><div className="panel-head"><div><h3>Recent achievements</h3><p>Look at you go!</p></div><button className="text-button" onClick={()=>go('/achievements')}>See all →</button></div><div className="achievement-row"><AchievementIcon emoji="⚡" color="gold"/><div><b>Quick starter</b><small>Complete your first quest</small></div><span className="unlocked">UNLOCKED</span></div><div className="achievement-row"><AchievementIcon emoji="🔥" color="pink"/><div><b>On fire</b><small>Keep a 7-day study streak</small></div><span className="unlocked">UNLOCKED</span></div></section><section className="focus-card"><div className="focus-icon"><Timer size={21}/></div><div><span className="tiny-label">FOCUS MODE</span><h3>Time to lock in?</h3><p>A focused session can make all the difference.</p><button onClick={()=>go('/profile?focus=1')}>Start focus session <span>→</span></button></div><div className="focus-orb">25<small>MIN</small></div></section></div>
- </div>
+const navigation = [
+  { to: '/', label: 'Dashboard', icon: Home }, { to: '/quests', label: 'Quest board', icon: Compass },
+  { to: '/subjects', label: 'Subjects', icon: BookOpen }, { to: '/quiz', label: 'Quiz arena', icon: Gamepad2 },
+  { to: '/achievements', label: 'Achievements', icon: Trophy }, { to: '/shop', label: 'Avatar shop', icon: ShoppingBag },
+  { to: '/profile', label: 'Profile & settings', icon: UserRound },
+]
+const emptyQuestion: QuizQuestion = { id: '', subject: '', prompt: '', choices: [] }
+
+function readLocalData(): UserData {
+  try {
+    const stored = localStorage.getItem('queststudy-data')
+    if (!stored) return emptyData
+    return { ...emptyData, ...JSON.parse(stored) as Partial<UserData> }
+  } catch { return emptyData }
 }
-function Stat({icon,label,value,note,color}:{icon:React.ReactNode,label:string,value:string,note:string,color:string}){return <div className="stat-card"><div className={`stat-icon ${color}`}>{icon}</div><div><span>{label}</span><b>{value}</b><small>{note}</small></div><div className={`stat-glow ${color}`}/></div>}
-function QuestRow({quest:q,complete}:{quest:Quest,complete:(id:string)=>void}){return <div className={`quest-row ${q.done?'finished':''}`}><button className="quest-check" onClick={()=>!q.done&&complete(q.id)} aria-label={q.done?'Quest completed':'Complete quest'}>{q.done?<Check size={15}/>:null}</button><div className="quest-mark">{q.subject==='Biology'?'⚛':q.subject==='Mathematics'?'∑':q.subject==='Literature'?'✎':'⌛'}</div><div className="quest-info"><b>{q.title}</b><span>{q.subject} <i>·</i> <em className={q.difficulty.toLowerCase()}>{q.difficulty}</em></span></div><div className="quest-reward"><b>+{q.difficulty==='Easy'?25:q.difficulty==='Medium'?50:100}</b><small>XP</small></div></div>}
-function Empty({text}:{text:string}){return <div className="empty-state"><Sparkles size={20}/>{text}</div>}
-function Quests({data,complete,remove,open}:{data:UserData,complete:(id:string)=>void,remove:(id:string)=>void,open:()=>void}){const [filter,setFilter]=useState('All quests');const list=data.quests.filter(q=>filter==='All quests'||(filter==='Completed'?q.done:!q.done));return <div className="content"><Heading eyebrow="YOUR ADVENTURE LOG" title={<>Quest <span className="gradient-text">board</span></>} subtitle="Every big achievement starts with a quest." action={<button className="primary-button" onClick={open}><Plus size={17}/> Create quest</button>}/><div className="quest-summary"><div><span>ACTIVE QUESTS</span><b>{data.quests.filter(q=>!q.done).length}</b></div><div><span>COMPLETED</span><b>{data.quests.filter(q=>q.done).length+23}</b></div><div><span>XP EARNED</span><b>{data.xp.toLocaleString()}</b></div><div className="summary-medal">🏆</div></div><div className="panel quest-board"><div className="panel-head"><div><h3>Your quests</h3><p>Make each one count</p></div><select className="filter-select" value={filter} onChange={e=>setFilter(e.target.value)}><option>All quests</option><option>Active</option><option>Completed</option></select></div>{list.length?<div className="board-list">{list.map(q=><div className="board-row" key={q.id}><QuestRow quest={q} complete={complete}/><div className="due-date"><Clock3 size={14}/>{q.due}</div><button className="delete-button" aria-label="Delete quest" onClick={()=>remove(q.id)}><Trash2 size={16}/></button></div>)}</div>:<Empty text="No quests here yet. Add an adventure to get started."/>}</div></div>}
-function Subjects({data}:{data:UserData}){return <div className="content"><Heading eyebrow="YOUR LEARNING PATHS" title={<>Choose your <span className="gradient-text">realm</span></>} subtitle="Explore your subjects and see how far you’ve come."/><div className="subject-grid">{subjects.map(s=><div className="panel subject-card" key={s.name}><div className="subject-top"><div className="subject-symbol" style={{color:s.color,background:`${s.color}18`}}>{s.icon}</div><span className="subject-tag">{s.quests} quests</span></div><h3>{s.name}</h3><p>{s.quests} quests on your journey</p><div className="subject-progress"><span>SUBJECT MASTERY</span><b>{s.progress}%</b></div><div className="progress"><i style={{width:`${s.progress}%`,background:s.color}}/></div><div className="subject-bottom"><span>{data.quests.filter(q=>q.subject===s.name&&q.done).length} quests completed</span><span style={{color:s.color}}>↗</span></div></div>)}</div><div className="panel learning-tip"><div className="tip-icon"><Sparkles/></div><div><b>Your next learning milestone</b><p>Complete 2 more Biology quests to reach 50% mastery.</p></div><span>+50 XP</span></div></div>}
-function Quiz({data,update,toast}:{data:UserData,update:React.Dispatch<React.SetStateAction<UserData>>,toast:(s:string)=>void}){const [answer,setAnswer]=useState(''),[done,setDone]=useState(false);return <div className="content"><Heading eyebrow="TEST YOUR KNOWLEDGE" title={<>Quiz <span className="gradient-text">arena</span></>} subtitle="A quick challenge is a great way to make knowledge stick."/><div className="quiz-layout"><div className="panel quiz-card"><div className="quiz-top"><span className="quiz-tag"><Gamepad2 size={14}/> DAILY CHALLENGE</span><span>QUESTION 1 OF 1</span></div><div className="quiz-progress"><i/></div><div className="quiz-subject">BIOLOGY · CELLULAR BIOLOGY</div><h2>Which organelle is primarily responsible for producing ATP during cellular respiration?</h2><div className="answers">{['Ribosome','Mitochondrion','Golgi apparatus','Lysosome'].map((a,i)=><button key={a} disabled={done} className={`answer ${answer===a?'selected':''} ${done&&a==='Mitochondrion'?'correct':''} ${done&&answer===a&&a!=='Mitochondrion'?'incorrect':''}`} onClick={()=>setAnswer(a)}><span>{String.fromCharCode(65+i)}</span>{a}{done&&a==='Mitochondrion'&&<CheckCircle2 size={17}/>}</button>)}</div><button className="primary-button quiz-submit" disabled={!answer||done} onClick={()=>{setDone(true);if(answer==='Mitochondrion'){update(d=>({...d,xp:d.xp+25,coins:d.coins+5,quizBest:Math.max(d.quizBest,100)}));toast('Correct! +25 XP')}else toast('Not quite! The answer is Mitochondrion')}}>{done?'Challenge complete': 'Submit answer'} {!done&&<span>→</span>}</button>{done&&<div className="quiz-feedback">{answer==='Mitochondrion'?'Brilliant work! You earned 25 XP.':'Keep learning — every attempt makes you stronger.'}</div>}</div><div className="panel quiz-side"><div className="quiz-trophy">🏆</div><span className="tiny-label">YOUR BEST SCORE</span><b>{data.quizBest}%</b><p>Keep up the practice to beat your personal best.</p><div className="divider"/><div className="quiz-side-row"><span>Quizzes completed</span><b>8</b></div><div className="quiz-side-row"><span>XP earned</span><b>+340 XP</b></div></div></div></div>}
-const achs=[['⚡','Quick starter','Complete your first quest','gold',true],['🔥','On fire','Keep a 7-day study streak','pink',true],['📚','Bookworm','Complete 5 quests','blue',true],['🎯','Focused mind','Complete 5 focus sessions','purple',true],['🏅','Quest champion','Complete 10 quests','gold',false],['🧠','Quiz master','Score 100% on a quiz','blue',false],['🌟','Unstoppable','Reach a 14-day streak','pink',false],['👑','Legendary scholar','Reach level 10','purple',false]] as const
-function Achievements({data}:{data:UserData}){return <div className="content"><Heading eyebrow="MILESTONES & MEMORIES" title={<>Your <span className="gradient-text">achievements</span></>} subtitle="Every milestone tells a story. These are yours."/><div className="achievement-overview"><div className="trophy-large">🏆</div><div><span>ACHIEVEMENTS UNLOCKED</span><b>04 <small>/ 12</small></b><p>Keep showing up. The next one is closer than you think.</p></div><div className="achievement-progress"><span>COMPLETION</span><b>33%</b><div className="progress"><i style={{width:'33%'}}/></div></div></div><div className="achievement-grid">{achs.map(([emoji,name,desc,color,unlocked],i)=><div className={`panel achievement-card ${!unlocked?'locked':''}`} key={name}><AchievementIcon emoji={emoji} color={color}/><div className="achievement-copy"><h3>{name}</h3><p>{desc}</p>{unlocked?<span className="unlocked">UNLOCKED</span>:<div className="unlock-progress"><span>{i===4?`${data.quests.filter(q=>q.done).length+3}/10 quests`:'Keep going to unlock'}</span><div className="progress"><i style={{width:i===4?'60%':'20%'}}/></div></div>}</div>{!unlocked&&<Shield className="lock" size={17}/>}</div>)}</div></div>}
-function AchievementIcon({emoji,color}:{emoji:string,color:string}){return <div className={`achievement-icon ${color}`}>{emoji}</div>}
-function Shop({data,update,toast}:{data:UserData,update:React.Dispatch<React.SetStateAction<UserData>>,toast:(s:string)=>void}){return <div className="content"><Heading eyebrow="MAKE IT YOURS" title={<>Avatar <span className="gradient-text">atelier</span></>} subtitle="A little flair for the hero you’re becoming."/><div className="shop-banner"><div className="shop-avatar">{data.equipped}</div><div><span>YOUR CURRENT LOOK</span><h2>Looking legendary.</h2><p>Collect cosmetics with coins you earn on your quests.</p></div><div className="shop-wallet"><Coins size={19}/><b>{data.coins}</b><span>AVAILABLE COINS</span></div></div><div className="shop-heading"><div><h3>Featured cosmetics</h3><p>Fresh finds for your next adventure</p></div><span><Coins size={15}/> Every purchase is permanent</span></div><div className="shop-grid">{rewards.map(item=>{const owned=data.inventory.includes(item.emoji);return <div className="panel shop-item" key={item.name}><div className="item-art">{item.emoji}</div><h3>{item.name}</h3><p>Cosmetic · Avatar accessory</p><div className="item-buy"><span><Coins size={15}/>{item.price}</span><button disabled={!owned&&data.coins<item.price} className={owned?'owned-button':'buy-button'} onClick={()=>{if(owned){update(d=>({...d,equipped:item.emoji}));toast(`${item.name} equipped`)}else{update(d=>({...d,coins:d.coins-item.price,inventory:[...d.inventory,item.emoji]}));toast(`${item.name} unlocked!`)}}}>{owned?(data.equipped===item.emoji?'Equipped':'Equip'):'Unlock'}</button></div></div>})}</div></div>}
-function Profile({data,update,supabase,session,setSession,toast}:{data:UserData,update:React.Dispatch<React.SetStateAction<UserData>>,supabase:SupabaseClient|null,session:boolean,setSession:(x:boolean)=>void,toast:(s:string)=>void}){const [email,setEmail]=useState(''),[password,setPassword]=useState(''),[authError,setAuthError]=useState(''),[tab,setTab]=useState('Profile');const [minutes,setMinutes]=useState(25),[running,setRunning]=useState(false);useEffect(()=>{if(!running)return;const t=setInterval(()=>setMinutes(m=>{if(m<=1){setRunning(false);update(d=>({...d,sessions:d.sessions+1,xp:d.xp+25,coins:d.coins+5,streak:Math.max(1,d.streak)}));toast('Focus session complete! +25 XP, +5 coins');return 25}return m-1}),60000);return()=>clearInterval(t)},[running,update,toast]);const auth=async(register:boolean)=>{if(!supabase){setAuthError('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to connect your Supabase project.');return}if(!email.trim()||password.length<6){setAuthError('Enter a valid email and a password with at least 6 characters.');return}setAuthError('');const {error}=register?await supabase.auth.signUp({email,password}):await supabase.auth.signInWithPassword({email,password});if(error)setAuthError(error.message);else{setSession(true);toast(register?'Account created':'Welcome back!')}};return <div className="content"><Heading eyebrow="YOUR PERSONAL SPACE" title={<>Player <span className="gradient-text">profile</span></>} subtitle="Your journey, your stats, your next chapter."/><div className="profile-layout"><div className="profile-main"><section className="panel profile-hero"><div className="profile-cover"><div className="cover-stars">✦　　✧　　 ✦</div></div><div className="profile-details"><div className="profile-avatar">{data.equipped}</div><div className="player-identity"><h2>{data.name}</h2><span>Level {Math.floor(data.xp/500)+1} Scholar <i>·</i> Joined October 2026</span></div><button className="outline-button" onClick={()=>setTab('Settings')}><Settings size={15}/> Edit profile</button></div><div className="profile-tabs">{['Profile','Statistics','Settings'].map(t=><button onClick={()=>setTab(t)} className={tab===t?'selected-tab':''} key={t}>{t}</button>)}</div>{tab==='Settings'?<div className="settings-panel"><label>Display name<input value={data.name} onChange={e=>update(d=>({...d,name:e.target.value}))}/></label><label>Email<input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" type="email"/></label><label>Password<input value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters" type="password"/></label>{authError&&<div className="auth-error">{authError}</div>}<div className="auth-buttons"><button className="primary-button" onClick={()=>auth(false)}>Log in</button><button className="outline-button" onClick={()=>auth(true)}>Create account</button></div><small>{session?'Supabase session connected.':'Connect your account to sync and secure your progress.'}</small></div>:<div className="profile-stats"><div><span>QUESTS COMPLETED</span><b>{data.quests.filter(q=>q.done).length+23}</b></div><div><span>QUIZ BEST</span><b>{data.quizBest}%</b></div><div><span>FOCUS SESSIONS</span><b>{data.sessions}</b></div><div><span>ACHIEVEMENTS</span><b>4 / 12</b></div></div>}</section><div className="panel timer-panel"><div className="timer-title"><div className="focus-icon"><Timer/></div><div><h3>Focus timer</h3><p>Make space for deep work</p></div><span className="tiny-label">POMODORO</span></div><div className="timer-controls"><div className="timer-clock">{String(minutes).padStart(2,'0')}<small>:00</small></div><div><button className="primary-button" onClick={()=>setRunning(!running)}>{running?'Pause':'Start'} {running?'Ⅱ':'▶'}</button><button className="reset-button" onClick={()=>{setRunning(false);setMinutes(25)}}>Reset</button></div></div><div className="timer-modes"><button className="active-mode" onClick={()=>{setMinutes(25);setRunning(false)}}>Focus · 25 min</button><button onClick={()=>{setMinutes(5);setRunning(false)}}>Short break · 5 min</button><button onClick={()=>{setMinutes(15);setRunning(false)}}>Long break · 15 min</button></div></div></div><aside className="profile-aside"><div className="panel level-card"><div className="level-card-top"><div className="level-emblem">{Math.floor(data.xp/500)+1}</div><div><span>YOUR RANK</span><b>Scholar</b><small>Level {Math.floor(data.xp/500)+1}</small></div></div><div className="progress"><i style={{width:`${data.xp%500/5}%`}}/></div><div className="level-xp"><span>{data.xp%500} / 500 XP</span><span>{500-data.xp%500} to go</span></div><div className="aside-divider"/><div className="profile-badges"><span>🏅</span><span>⚡</span><span>🔥</span><span>＋</span></div><p>4 achievements unlocked</p></div><div className="panel streak-card"><div><Flame size={20}/><span>YOUR STREAK</span></div><b>{data.streak} <small>days</small></b><p>You’re building a great habit. Keep it up!</p><div className="streak-days">{['M','T','W','T','F','S','S'].map((d,i)=><span key={i} className={i<5?'day-on':''}>{d}<b>{i<5?'✓':'·'}</b></span>)}</div></div></aside></div></div>}
-function QuestModal({close,add}:{close:()=>void,add:(q:Omit<Quest,'id'|'done'>)=>void}){const [title,setTitle]=useState(''),[subject,setSubject]=useState('Mathematics'),[difficulty,setDifficulty]=useState<Quest['difficulty']>('Medium'),[due,setDue]=useState('Today'),[error,setError]=useState('');return <div className="modal-backdrop" onClick={close}><form className="quest-modal" onSubmit={e=>{e.preventDefault();if(!title.trim()){setError('Give your quest a title first.');return}add({title:title.trim(),subject,difficulty,due})}} onClick={e=>e.stopPropagation()}><div className="modal-top"><div><span className="eyebrow">NEW ADVENTURE</span><h2>Create a quest</h2></div><button type="button" onClick={close} className="icon-button"><X/></button></div><label>Quest title<input autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Review chapter 4 notes" maxLength={80}/></label><div className="form-row"><label>Subject<select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(s=><option key={s.name}>{s.name}</option>)}</select></label><label>Deadline<select value={due} onChange={e=>setDue(e.target.value)}><option>Today</option><option>Tomorrow</option><option>Nov 28</option><option>Next week</option></select></label></div><label>Difficulty<div className="difficulty-options">{(['Easy','Medium','Hard'] as const).map(d=><button type="button" key={d} className={difficulty===d?'difficulty-active':''} onClick={()=>setDifficulty(d)}>{d}<small>+{d==='Easy'?25:d==='Medium'?50:100} XP</small></button>)}</div></label>{error&&<div className="auth-error">{error}</div>}<button className="primary-button modal-submit" type="submit"><Plus size={17}/> Add quest</button></form></div>}
+
+function refreshLocalAchievements(data: UserData): UserData {
+  const unlocked = new Set(data.achievementIds)
+  if (data.completedTotal >= 1) unlocked.add('first_quest')
+  if (data.completedTotal >= 5) unlocked.add('quests_5')
+  if (data.completedTotal >= 10) unlocked.add('quests_10')
+  if (data.quizBest >= 100) unlocked.add('quiz_master')
+  if (data.streak >= 3) unlocked.add('streak_3')
+  if (data.streak >= 7) unlocked.add('streak_7')
+  if (data.sessions >= 5) unlocked.add('focus_5')
+  if (data.xp >= 4500) unlocked.add('level_10')
+  return { ...data, achievementIds: [...unlocked] }
+}
+
+function recordLocalActivity(data: UserData): UserData {
+  const now = new Date()
+  const key = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const todayKey = key(now)
+  const yesterdayKey = key(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))
+  const streak = data.lastStudyDate === todayKey ? data.streak : data.lastStudyDate === yesterdayKey ? data.streak + 1 : 1
+  const updated = { ...data, streak, lastStudyDate: todayKey }
+  return refreshLocalAchievements(updated)
+}
+
+function App() { return <BrowserRouter><StudyApp /></BrowserRouter> }
+
+function StudyApp() {
+  const [data, setData] = useState<UserData>(readLocalData)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [session, setSession] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingQuest, setEditingQuest] = useState<Quest | null>(null)
+  const [toast, setToast] = useState('')
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  const notify = (message: string) => setToast(message)
+  const refreshAccount = async (id: string) => {
+    if (!supabase) return
+    setLoading(true)
+    try { setData(await loadUserData(supabase, id)) }
+    catch (error) { notify(error instanceof Error ? error.message : 'Could not load your Supabase data.') }
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => {
+    if (!supabase) return
+    let active = true
+    supabase.auth.getSession().then(({ data: auth }) => {
+      if (!active) return
+      setUserId(auth.session?.user.id ?? null)
+      setSession(Boolean(auth.session))
+    }).catch(() => notify('Could not check your Supabase session.'))
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, auth) => {
+      setSession(Boolean(auth))
+      setUserId(auth?.user.id ?? null)
+      if (!auth) setData(readLocalData())
+    })
+    return () => { active = false; listener.subscription.unsubscribe() }
+  }, [])
+
+  useEffect(() => { if (userId) void refreshAccount(userId) }, [userId])
+  useEffect(() => { if (!userId) { try { localStorage.setItem('queststudy-data', JSON.stringify(data)) } catch { /* Storage may be disabled. */ } } }, [data, userId])
+  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(''), 3200); return () => window.clearTimeout(timer) }, [toast])
+
+  const completeQuest = async (id: string) => {
+    const quest = data.quests.find((item) => item.id === id)
+    if (!quest || quest.done) return
+    try {
+      if (supabase && userId) {
+        const result = await completeQuestInDb(supabase, id)
+        await refreshAccount(userId)
+        notify(result.awarded ? `Quest complete! +${result.xp} XP` : 'This quest was already completed.')
+      } else {
+        const xp = quest.difficulty === 'Easy' ? 25 : quest.difficulty === 'Medium' ? 50 : 100
+        setData((current) => recordLocalActivity({ ...current, xp: current.xp + xp, coins: current.coins + Math.floor(xp / 5), completedTotal: current.completedTotal + 1, quests: current.quests.map((item) => item.id === id ? { ...item, done: true } : item) }))
+        notify(`Quest complete! +${xp} XP`)
+      }
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not complete the quest.') }
+  }
+
+  const saveQuest = async (input: Omit<Quest, 'id' | 'done'>) => {
+    try {
+      if (supabase && userId) {
+        if (editingQuest) await updateQuestInDb(supabase, editingQuest.id, input)
+        else await createQuestInDb(supabase, userId, input)
+        await refreshAccount(userId)
+      } else if (editingQuest) {
+        setData((current) => ({ ...current, quests: current.quests.map((item) => item.id === editingQuest.id ? { ...item, ...input } : item) }))
+      } else {
+        setData((current) => ({ ...current, quests: [{ ...input, id: crypto.randomUUID(), done: false }, ...current.quests] }))
+      }
+      setEditingQuest(null); setModalOpen(false); notify(editingQuest ? 'Quest updated.' : 'Quest added to your board.')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not save the quest.') }
+  }
+
+  const removeQuest = async (id: string) => {
+    try {
+      if (supabase && userId) { await deleteQuestInDb(supabase, id); await refreshAccount(userId) }
+      else setData((current) => ({ ...current, quests: current.quests.filter((quest) => quest.id !== id) }))
+      notify('Quest deleted.')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not delete the quest.') }
+  }
+
+  const submitAnswer = async (question: QuizQuestion, answerIndex: number) => {
+    if (supabase && userId && !question.id.startsWith('offline-')) {
+      const result = await submitQuizAnswer(supabase, question.id, answerIndex)
+      await refreshAccount(userId)
+      return { correct: Boolean((result as { correct?: boolean }).correct), rewarded: result.rewarded, xp: result.xp }
+    }
+    throw new Error('Sign in to submit answers to your Supabase quiz data.')
+  }
+
+  const createQuizQuestion = async (input: { subject: string; prompt: string; choices: string[]; answerIndex: number }) => {
+    if (!supabase || !userId) throw new Error('Sign in to add a question to your database.')
+    const question = await createQuizQuestionInDb(supabase, input)
+    await refreshAccount(userId)
+    return question
+  }
+
+  const buyAvatar = async (emoji: string, price: number) => {
+    try {
+      if (data.inventory.includes(emoji)) { notify('You already own this item.'); return }
+      if ((!supabase || !userId) && data.coins < price) { notify('You need more coins for this item.'); return }
+      if (supabase && userId) { await purchaseAvatar(supabase, emoji); await refreshAccount(userId) }
+      else setData((current) => ({ ...current, coins: current.coins - price, inventory: [...current.inventory, emoji] }))
+      notify('Avatar item unlocked.')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not buy this item.') }
+  }
+
+  const chooseAvatar = async (emoji: string) => {
+    try {
+      if (!data.inventory.includes(emoji)) { notify('Unlock this item before equipping it.'); return }
+      if (supabase && userId) { await equipAvatar(supabase, userId, emoji); await refreshAccount(userId) }
+      else setData((current) => ({ ...current, equipped: emoji }))
+      notify('Avatar equipped.')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not equip this item.') }
+  }
+
+  const saveName = async (name: string) => {
+    if (!name.trim()) { notify('Display name cannot be blank.'); return }
+    try {
+      if (supabase && userId) await saveProfile(supabase, userId, name)
+      setData((current) => ({ ...current, name: name.trim() }))
+      notify('Profile saved.')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not save your profile.') }
+  }
+
+  const beginFocus = async (duration: number) => {
+    if (!supabase || !userId) return null
+    const result = await startFocus(supabase, duration)
+    return result
+  }
+  const finishFocus = async (sessionId: string | null, duration: number) => {
+    try {
+      if (supabase && userId && sessionId) {
+        await completeFocus(supabase, sessionId)
+        await refreshAccount(userId)
+      } else {
+        setData((current) => recordLocalActivity({ ...current, sessions: current.sessions + 1, focusMinutes: current.focusMinutes + duration, weeklyFocusMinutes: [...current.weeklyFocusMinutes.slice(0, 6), current.weeklyFocusMinutes[6] + duration], monthlyFocusMinutes: [...current.monthlyFocusMinutes.slice(0, 3), current.monthlyFocusMinutes[3] + duration], xp: current.xp + 25, coins: current.coins + 5 }))
+      }
+      notify('Focus session complete! +25 XP, +5 coins.')
+    } catch (error) { notify(error instanceof Error ? error.message : 'Could not record your focus session.') }
+  }
+  const stopFocus = async (sessionId: string | null) => {
+    if (sessionId && supabase) {
+      try { await cancelFocus(supabase, sessionId) }
+      catch (error) { notify(error instanceof Error ? error.message : 'Could not cancel this focus session.') }
+    }
+  }
+
+  const signOut = async () => {
+    if (supabase) {
+      const { error } = await supabase.auth.signOut()
+      if (error) { notify(error.message); return }
+    }
+    setUserId(null); setSession(false); setData(readLocalData()); notify('Signed out.')
+  }
+
+  const title = navigation.find((item) => item.to === location.pathname)?.label ?? 'Dashboard'
+  const openQuest = (quest?: Quest) => { setEditingQuest(quest ?? null); setModalOpen(true) }
+  const isCloudMode = Boolean(supabase && userId)
+
+  return <div className="app-shell">
+    <aside className={`sidebar ${menuOpen ? 'open' : ''}`}>
+      <div className="brand"><span className="brand-icon"><Swords size={21}/></span><span>quest<span className="brand-accent">study</span></span></div>
+      <div className="side-label">YOUR SPACE</div>
+      <nav>{navigation.map((item) => <NavLink onClick={() => setMenuOpen(false)} key={item.to} to={item.to} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}><item.icon size={18}/><span>{item.label}</span>{item.to === '/quests' && <b className="nav-count">{data.quests.filter((quest) => !quest.done).length}</b>}</NavLink>)}</nav>
+      <div className="side-spacer"/>
+      <div className="sidebar-card"><div className="mini-shield"><Shield size={16}/></div><b>Keep your streak alive!</b><p>A little progress every day goes a long way.</p><div className="streak-mini"><Flame size={15}/>{data.streak} day streak</div></div>
+      <div className="sync-state"><span className={isCloudMode ? 'sync-dot online' : 'sync-dot'}/>{isCloudMode ? 'Synced to Supabase' : supabase ? 'Sign in to sync' : 'Saved on this device'}</div>
+      {session && <button className="nav-link signout" onClick={() => void signOut()}><LogOut size={18}/>Sign out</button>}
+      <div className="side-user"><div className="avatar">{data.equipped}</div><div><b>{data.name}</b><small>Level {Math.floor(data.xp / 500) + 1} Scholar</small></div><ChevronDown size={16}/></div>
+    </aside>
+    <main className="main">
+      <header className="topbar"><button className="icon-button mobile-menu" onClick={() => setMenuOpen(!menuOpen)} aria-label="Toggle navigation">{menuOpen ? <X/> : <Menu/>}</button><div className="crumb">My space <span>/</span> <b>{title}</b></div><div className="top-actions"><button className="icon-button" aria-label="Search quests" onClick={() => navigate('/quests?search=')}><Search size={18}/></button><button className="coin-pill" onClick={() => navigate('/shop')}><Coins size={16}/>{data.coins} <span>coins</span></button><button className="profile-button" onClick={() => navigate('/profile')}><div className="avatar small">{data.equipped}</div><span>{data.name.split(' ')[0]}</span></button></div></header>
+      {loading && <div className="sync-banner"><span className="sync-dot online"/>Loading your Supabase progress…</div>}
+      <Routes>
+        <Route path="/" element={<Dashboard data={data} complete={completeQuest} go={navigate}/>}/>
+        <Route path="/quests" element={<Quests data={data} complete={completeQuest} remove={removeQuest} edit={openQuest} open={() => openQuest()}/>}/>
+        <Route path="/subjects" element={<Subjects data={data} go={navigate}/>}/>
+        <Route path="/quiz" element={<Quiz data={data} connected={isCloudMode} submit={submitAnswer} createQuestion={createQuizQuestion} notify={notify}/>}/>
+        <Route path="/achievements" element={<Achievements data={data}/>}/>
+        <Route path="/shop" element={<Shop data={data} buy={buyAvatar} equip={chooseAvatar}/>}/>
+        <Route path="/profile" element={<Profile data={data} session={session} configured={Boolean(supabase)} notify={notify} saveName={saveName} startFocus={beginFocus} finishFocus={finishFocus} cancelFocus={stopFocus} signOut={signOut} onRefresh={() => userId && refreshAccount(userId)}/>}/>
+        <Route path="*" element={<Dashboard data={data} complete={completeQuest} go={navigate}/>}/>
+      </Routes>
+    </main>
+    {modalOpen && <QuestModal key={editingQuest?.id ?? 'new'} initial={editingQuest} subjects={data.subjects} close={() => { setModalOpen(false); setEditingQuest(null) }} save={saveQuest}/>}
+    {toast && <div className="toast"><CheckCircle2 size={18}/>{toast}</div>}
+  </div>
+}
+
+function Heading({ eyebrow, title, subtitle, action }: { eyebrow: string; title: React.ReactNode; subtitle: string; action?: React.ReactNode }) {
+  return <div className="page-heading"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>
+}
+
+function Dashboard({ data, complete, go }: { data: UserData; complete: (id: string) => void; go: (path: string) => void }) {
+  const [period, setPeriod] = useState<'week' | 'month'>('week')
+  const pending = data.quests.filter((quest) => !quest.done)
+  const chartValues = period === 'week' ? data.weeklyFocusMinutes : data.monthlyFocusMinutes
+  const chartMax = Math.max(...chartValues, 1)
+  const totalMins = period === 'week' ? chartValues.reduce((sum, value) => sum + value, 0) : data.focusMinutes
+  const today = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase()
+  const level = Math.floor(data.xp / 500) + 1
+  const levelProgress = data.xp % 500 / 5
+  const achievedToday = data.quests.filter((quest) => quest.done).length
+  return <div className="content">
+    <Heading eyebrow={today} title={<>Ready for your next <span className="gradient-text">level up?</span></>} subtitle="Every quest you complete brings you closer to your goals." action={<button className="primary-button" onClick={() => go('/quests')}><Plus size={17}/> New quest</button>}/>
+    <section className="hero-card"><div className="hero-copy"><div className="rank-tag"><Sparkles size={14}/> YOUR ADVENTURE CONTINUES</div><h2>Small steps.<br/><span>Epic progress.</span></h2><p>Show up for your goals today. Each quest brings your next level a little closer.</p><button className="hero-button" onClick={() => go('/quests')}>View your quests <span>↗</span></button></div><div className="hero-art"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="planet">✦</div><div className="spark s1">✧</div><div className="spark s2">✦</div><div className="spark s3">✧</div><div className="hero-level"><span>LVL</span><b>{level}</b><small>SCHOLAR</small></div></div><div className="hero-footer"><div><span className="tiny-label">LEVEL {level} · SCHOLAR</span><strong>{data.xp.toLocaleString()} <small>XP</small></strong></div><div className="xp-track"><i style={{ width: `${levelProgress}%` }}/></div><div className="xp-next">{500 - data.xp % 500} XP to next level</div></div></section>
+    <div className="stats-grid"><Stat icon={<Zap/>} label="TOTAL XP" value={data.xp.toLocaleString()} note={`${data.xp % 500} / 500 toward next level`} color="purple"/><Stat icon={<Flame/>} label="DAY STREAK" value={`${data.streak} days`} note="Complete a quest or focus session" color="orange"/><Stat icon={<CheckCircle2/>} label="QUESTS DONE" value={`${data.completedTotal}`} note={`${pending.length} active quests`} color="green"/><Stat icon={<Clock3/>} label="FOCUS TIME" value={`${(data.focusMinutes / 60).toFixed(1)} hrs`} note={`${data.sessions} completed sessions`} color="blue"/></div>
+    <div className="dashboard-grid"><section className="panel quests-panel"><div className="panel-head"><div><h3>Active quests</h3><p>Your next steps to greatness</p></div><button className="text-button" onClick={() => go('/quests')}>View all <span>→</span></button></div><div className="quest-list">{pending.slice(0, 3).map((quest) => <QuestRow key={quest.id} quest={quest} complete={complete}/>)}{pending.length === 0 && <Empty text="No active quests. Create one to get started."/>}</div><div className="daily-foot"><span><Target size={15}/> COMPLETED QUESTS</span><b>{achievedToday} done</b><div className="progress"><i style={{ width: `${Math.min(100, achievedToday * 12)}%` }}/></div></div></section>
+      <section className="panel week-panel"><div className="panel-head"><div><h3>Your study rhythm</h3><p>Recorded focus sessions</p></div><button className="period" onClick={() => setPeriod(period === 'week' ? 'month' : 'week')}>{period === 'week' ? 'THIS WEEK' : 'LAST 4 WEEKS'} <ChevronDown size={13}/></button></div><div className="week-total"><b>{(totalMins / 60).toFixed(1)} <small>hrs</small></b><span className="positive">{period === 'week' ? '7 days' : '28 days'}</span></div><div className="chart">{chartValues.map((minutes, index) => <div className="chart-col" key={`${period}-${index}`}><div className="chart-value">{minutes}m</div><div className={`bar ${period === 'week' && index === 6 ? 'today' : ''}`} style={{ height: `${Math.max(5, minutes / chartMax * 100)}%` }}/><span>{period === 'week' ? ['M','T','W','T','F','S','S'][index] : `W${index + 1}`}</span></div>)}</div></section></div>
+    <div className="bottom-grid"><section className="panel achievements-panel"><div className="panel-head"><div><h3>Recent achievements</h3><p>Milestones you have unlocked</p></div><button className="text-button" onClick={() => go('/achievements')}>See all →</button></div>{data.achievementIds.length ? data.achievementIds.slice(-2).reverse().map((id) => { const achievement = achievementList.find((item) => item.id === id); return achievement ? <div className="achievement-row" key={id}><AchievementIcon emoji={achievement.emoji} color={achievement.color}/><div><b>{achievement.name}</b><small>{achievement.description}</small></div><span className="unlocked">UNLOCKED</span></div> : null }) : <Empty text="Complete quests, quizzes, and focus sessions to unlock achievements."/>}</section><section className="focus-card"><div className="focus-icon"><Timer size={21}/></div><div><span className="tiny-label">FOCUS MODE</span><h3>Time to lock in?</h3><p>A focused session can make all the difference.</p><button onClick={() => go('/profile?focus=1')}>Start focus session <span>→</span></button></div><div className="focus-orb">25<small>MIN</small></div></section></div>
+  </div>
+}
+
+function Stat({ icon, label, value, note, color }: { icon: React.ReactNode; label: string; value: string; note: string; color: string }) {
+  return <div className="stat-card"><div className={`stat-icon ${color}`}>{icon}</div><div><span>{label}</span><b>{value}</b><small>{note}</small></div><div className={`stat-glow ${color}`}/></div>
+}
+
+function QuestRow({ quest, complete }: { quest: Quest; complete: (id: string) => void }) {
+  const xp = quest.difficulty === 'Easy' ? 25 : quest.difficulty === 'Medium' ? 50 : 100
+  return <div className={`quest-row ${quest.done ? 'finished' : ''}`}><button className="quest-check" onClick={() => !quest.done && complete(quest.id)} disabled={quest.done} aria-label={quest.done ? 'Quest completed' : 'Complete quest'}>{quest.done ? <Check size={15}/> : null}</button><div className="quest-mark">{quest.subject === 'Biology' ? '⚛' : quest.subject === 'Mathematics' ? '∑' : quest.subject === 'Literature' ? '✎' : '⌛'}</div><div className="quest-info"><b>{quest.title}</b><span>{quest.subject} <i>·</i> <em className={quest.difficulty.toLowerCase()}>{quest.difficulty}</em></span></div><div className="quest-reward"><b>+{xp}</b><small>XP</small></div></div>
+}
+
+function Empty({ text }: { text: string }) { return <div className="empty-state"><Sparkles size={20}/>{text}</div> }
+
+function Quests({ data, complete, remove, edit, open }: { data: UserData; complete: (id: string) => void; remove: (id: string) => void; edit: (quest: Quest) => void; open: () => void }) {
+  const [filter, setFilter] = useState('All quests')
+  const [searchParams] = useSearchParams()
+  const [searchText, setSearchText] = useState(searchParams.get('search') ?? '')
+  const subjectFilter = searchParams.get('subject')
+  const filtered = data.quests.filter((quest) => (filter === 'All quests' || (filter === 'Completed' ? quest.done : !quest.done)) && (!subjectFilter || quest.subject === subjectFilter) && quest.title.toLowerCase().includes(searchText.toLowerCase()))
+  return <div className="content"><Heading eyebrow="YOUR ADVENTURE LOG" title={<>Quest <span className="gradient-text">board</span></>} subtitle="Create, edit, complete, and remove your study quests." action={<button className="primary-button" onClick={open}><Plus size={17}/> Create quest</button>}/><div className="quest-summary"><div><span>ACTIVE QUESTS</span><b>{data.quests.filter((quest) => !quest.done).length}</b></div><div><span>COMPLETED</span><b>{data.completedTotal}</b></div><div><span>XP EARNED</span><b>{data.xp.toLocaleString()}</b></div><div className="summary-medal">🏆</div></div><div className="panel quest-board"><div className="panel-head"><div><h3>{subjectFilter ? `${subjectFilter} quests` : 'Your quests'}</h3><p>Make each one count</p></div><div className="quest-tools"><input className="quest-search" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search quests" aria-label="Search quests"/><select className="filter-select" value={filter} onChange={(event) => setFilter(event.target.value)}><option>All quests</option><option>Active</option><option>Completed</option></select></div></div>{filtered.length ? <div className="board-list">{filtered.map((quest) => <div className="board-row" key={quest.id}><QuestRow quest={quest} complete={complete}/><div className="due-date"><Clock3 size={14}/>{quest.due}</div>{!quest.done && <button className="edit-button" aria-label={`Edit ${quest.title}`} onClick={() => edit(quest)}><Pencil size={15}/></button>}<button className="delete-button" aria-label={`Delete ${quest.title}`} onClick={() => remove(quest.id)}><Trash2 size={16}/></button></div>)}</div> : <Empty text="No matching quests. Add an adventure or change your search."/>}</div></div>
+}
+
+function Subjects({ data, go }: { data: UserData; go: (path: string) => void }) {
+  return <div className="content"><Heading eyebrow="YOUR LEARNING PATHS" title={<>Choose your <span className="gradient-text">realm</span></>} subtitle="Subjects are loaded from your account database."/>{data.subjects.length ? <div className="subject-grid">{data.subjects.map((subject) => { const items = data.quests.filter((quest) => quest.subject === subject.name); const completed = items.filter((quest) => quest.done).length; const progress = items.length ? Math.round(completed / items.length * 100) : 0; return <div className="panel subject-card" key={subject.id}><div className="subject-top"><div className="subject-symbol" style={{ color: subject.color, background: `${subject.color}18` }}>{subjectIcon(subject.name)}</div><span className="subject-tag">{items.length} quests</span></div><h3>{subject.name}</h3><p>{completed} of {items.length} quests completed</p><div className="subject-progress"><span>SUBJECT MASTERY</span><b>{progress}%</b></div><div className="progress"><i style={{ width: `${progress}%`, background: subject.color }}/></div><button className="subject-open" onClick={() => go(`/quests?subject=${encodeURIComponent(subject.name)}`)}>View {subject.name} quests <span>→</span></button></div> })}</div> : <Empty text="No subjects are set up for this account yet."/>}</div>
+}
+
+function subjectIcon(name: string) {
+  if (name.toLowerCase().includes('math')) return '∑'
+  if (name.toLowerCase().includes('bio')) return '⚛'
+  if (name.toLowerCase().includes('liter')) return '✎'
+  if (name.toLowerCase().includes('history')) return '⌛'
+  return '◈'
+}
+
+function Quiz({ data, connected, submit, createQuestion, notify }: { data: UserData; connected: boolean; submit: (question: QuizQuestion, answer: number) => Promise<{ correct: boolean; rewarded: boolean; xp: number }>; createQuestion: (input: { subject: string; prompt: string; choices: string[]; answerIndex: number }) => Promise<QuizQuestion>; notify: (message: string) => void }) {
+  const [question, setQuestion] = useState<QuizQuestion>(emptyQuestion)
+  const [answer, setAnswer] = useState<number | null>(null)
+  const [result, setResult] = useState<{ correct: boolean; rewarded: boolean; xp: number } | null>(null)
+  const [index, setIndex] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [creatorOpen, setCreatorOpen] = useState(false)
+  const loadQuestion = async (nextIndex = index + 1) => {
+    setError(''); setAnswer(null); setResult(null); setBusy(true)
+    try {
+      if (!connected || !supabase) throw new Error('Sign in to load quiz questions from your database.')
+      setQuestion(await getDailyQuestion(supabase))
+      setIndex(nextIndex)
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not load a quiz question.') }
+    finally { setBusy(false) }
+  }
+  useEffect(() => { if (connected) void loadQuestion(0); else { setQuestion(emptyQuestion); setAnswer(null); setResult(null); setIndex(0); setError('Sign in to load quiz questions from your database.') } }, [connected])
+  const sendAnswer = async () => {
+    if (answer === null || busy || !question.id) return
+    setBusy(true)
+    try {
+      const submitted = await submit(question, answer)
+      setResult(submitted)
+      notify(submitted.correct ? (submitted.rewarded ? `Correct! +${submitted.xp} XP` : 'Correct! Your answer was saved. This question has no XP reward.') : 'Not quite. Try another question.')
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not submit this answer.') }
+    finally { setBusy(false) }
+  }
+  const saveQuestion = async (input: { subject: string; prompt: string; choices: string[]; answerIndex: number }) => {
+    try {
+      const created = await createQuestion(input)
+      setCreatorOpen(false)
+      setQuestion(created); setAnswer(null); setResult(null); setError('')
+      notify('Your question is saved to the database.')
+    } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not save your question.') }
+  }
+  return <div className="content"><Heading eyebrow="TEST YOUR KNOWLEDGE" title={<>Quiz <span className="gradient-text">arena</span></>} subtitle="Quiz questions and answers come from your Supabase database." action={<button className="primary-button" disabled={!connected} onClick={() => setCreatorOpen(true)}><Plus size={17}/> Add question</button>}/><div className="quiz-layout"><div className="panel quiz-card"><div className="quiz-top"><span className="quiz-tag"><Gamepad2 size={14}/> DATABASE QUIZ</span><span>{data.quizCount} ATTEMPTS</span></div><div className="quiz-progress"><i style={{ width: result ? '100%' : question.id ? '25%' : '0%' }}/></div>{question.id ? <><div className="quiz-subject">{question.subject.toUpperCase()} · MULTIPLE CHOICE</div><h2>{question.prompt}</h2><div className="answers">{question.choices.map((choice, choiceIndex) => <button key={choice} disabled={Boolean(result) || busy} className={`answer ${answer === choiceIndex ? 'selected' : ''} ${result && answer === choiceIndex && result.correct ? 'correct' : ''} ${result && answer === choiceIndex && !result.correct ? 'incorrect' : ''}`} onClick={() => setAnswer(choiceIndex)}><span>{String.fromCharCode(65 + choiceIndex)}</span>{choice}{result && answer === choiceIndex && result.correct && <CheckCircle2 size={17}/>}</button>)}</div></> : <Empty text={connected ? 'No questions are available yet. Add your own study question.' : 'Sign in to load quiz questions from your database.'}/ >}{error && <div className="auth-error">{error}</div>}<div className="quiz-actions"><button className="primary-button quiz-submit" disabled={!question.id || answer === null || busy || Boolean(result)} onClick={() => void sendAnswer()}>{busy ? 'Checking…' : result ? 'Answer submitted' : 'Submit answer'} {!result && <span>→</span>}</button><button className="outline-button" disabled={busy || !connected} onClick={() => void loadQuestion()}>Next question</button></div>{result && <div className="quiz-feedback">{result.correct ? 'Correct answer. Well done!' : 'That answer was incorrect. Keep practicing.'}</div>}</div><div className="panel quiz-side"><div className="quiz-trophy">🏆</div><span className="tiny-label">YOUR BEST SCORE</span><b>{data.quizBest}%</b><p>Questions you add are saved to your account.</p><div className="divider"/><div className="quiz-side-row"><span>Quizzes completed</span><b>{data.quizCount}</b></div><div className="quiz-side-row"><span>Rewards earned</span><b>{data.rewardedQuizIds.length}</b></div></div></div>{creatorOpen && <QuizQuestionCreator subjects={data.subjects} close={() => setCreatorOpen(false)} save={saveQuestion}/>}</div>
+}
+
+function QuizQuestionCreator({ subjects, close, save }: { subjects: UserData['subjects']; close: () => void; save: (input: { subject: string; prompt: string; choices: string[]; answerIndex: number }) => Promise<void> }) {
+  const [subject, setSubject] = useState(subjects[0]?.name ?? 'General')
+  const [prompt, setPrompt] = useState('')
+  const [choices, setChoices] = useState(['', '', '', ''])
+  const [answerIndex, setAnswerIndex] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const cleanChoices = choices.map((choice) => choice.trim())
+    if (!prompt.trim() || cleanChoices.some((choice) => !choice)) { setError('Enter a question and all four choices.'); return }
+    setSaving(true); setError('')
+    await save({ subject, prompt: prompt.trim(), choices: cleanChoices, answerIndex })
+    setSaving(false)
+  }
+  return <div className="modal-backdrop" onClick={close}><form className="quest-modal" onSubmit={(event) => void handleSubmit(event)} onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><span className="eyebrow">YOUR STUDY MATERIAL</span><h2>Add a quiz question</h2></div><button type="button" onClick={close} className="icon-button" aria-label="Close"><X/></button></div><label>Subject<select value={subject} onChange={(event) => setSubject(event.target.value)}>{subjects.map((item) => <option key={item.id}>{item.name}</option>)}{!subjects.length && <option>General</option>}</select></label><label>Question<input autoFocus maxLength={500} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Write a question from your study material"/></label><label>Answer choices</label><div className="quiz-create-choices">{choices.map((choice, index) => <div key={index}><input maxLength={160} value={choice} onChange={(event) => setChoices((items) => items.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} placeholder={`Choice ${String.fromCharCode(65 + index)}`}/><label><input type="radio" name="correct-choice" checked={answerIndex === index} onChange={() => setAnswerIndex(index)}/> Correct</label></div>)}</div>{error && <div className="auth-error">{error}</div>}<button className="primary-button modal-submit" disabled={saving} type="submit"><Check size={16}/>{saving ? 'Saving…' : 'Save question'}</button></form></div>
+}
+
+const achievementList = [
+  { id: 'first_quest', emoji: '⚡', name: 'Quick starter', description: 'Complete your first quest', color: 'gold' },
+  { id: 'streak_7', emoji: '🔥', name: 'On fire', description: 'Keep a 7-day study streak', color: 'pink' },
+  { id: 'quests_5', emoji: '📚', name: 'Bookworm', description: 'Complete 5 quests', color: 'blue' },
+  { id: 'focus_5', emoji: '🎯', name: 'Focused mind', description: 'Complete 5 focus sessions', color: 'purple' },
+  { id: 'quests_10', emoji: '🏅', name: 'Quest champion', description: 'Complete 10 quests', color: 'gold' },
+  { id: 'quiz_master', emoji: '🧠', name: 'Quiz master', description: 'Answer a quiz question correctly', color: 'blue' },
+  { id: 'streak_3', emoji: '🌟', name: 'Getting warmer', description: 'Keep a 3-day study streak', color: 'pink' },
+  { id: 'level_10', emoji: '👑', name: 'Legendary scholar', description: 'Reach level 10', color: 'purple' },
+]
+function Achievements({ data }: { data: UserData }) {
+  const unlocked = data.achievementIds.length
+  return <div className="content"><Heading eyebrow="MILESTONES & MEMORIES" title={<>Your <span className="gradient-text">achievements</span></>} subtitle="Achievements unlock from your actual quest, quiz, and focus activity."/><div className="achievement-overview"><div className="trophy-large">🏆</div><div><span>ACHIEVEMENTS UNLOCKED</span><b>{String(unlocked).padStart(2, '0')} <small>/ {achievementList.length}</small></b><p>Keep showing up. The next one is closer than you think.</p></div><div className="achievement-progress"><span>COMPLETION</span><b>{Math.round(unlocked / achievementList.length * 100)}%</b><div className="progress"><i style={{ width: `${unlocked / achievementList.length * 100}%` }}/></div></div></div><div className="achievement-grid">{achievementList.map((item) => { const isUnlocked = data.achievementIds.includes(item.id); return <div className={`panel achievement-card ${isUnlocked ? '' : 'locked'}`} key={item.id}><AchievementIcon emoji={item.emoji} color={item.color}/><div className="achievement-copy"><h3>{item.name}</h3><p>{item.description}</p>{isUnlocked ? <span className="unlocked">UNLOCKED</span> : <div className="unlock-progress"><span>Not unlocked yet</span><div className="progress"><i style={{ width: '0%' }}/></div></div>}</div>{!isUnlocked && <Shield className="lock" size={17}/>}</div> })}</div></div>
+}
+function AchievementIcon({ emoji, color }: { emoji: string; color: string }) { return <div className={`achievement-icon ${color}`}>{emoji}</div> }
+
+function Shop({ data, buy, equip }: { data: UserData; buy: (emoji: string, price: number) => void; equip: (emoji: string) => void }) {
+  return <div className="content"><Heading eyebrow="MAKE IT YOURS" title={<>Avatar <span className="gradient-text">atelier</span></>} subtitle="Unlock items with quest coins, then equip them here."/><div className="shop-banner"><div className="shop-avatar">{data.equipped}</div><div><span>YOUR CURRENT LOOK</span><h2>Looking legendary.</h2><p>Your inventory and coins are saved to your account.</p></div><div className="shop-wallet"><Coins size={19}/><b>{data.coins}</b><span>AVAILABLE COINS</span></div></div><div className="shop-heading"><div><h3>Cosmetics</h3><p>Items are loaded from the database catalog</p></div><span><Coins size={15}/> Prices are checked in the database</span></div>{data.avatarCatalog.length ? <div className="shop-grid">{data.avatarCatalog.map((item) => { const owned = data.inventory.includes(item.itemId); const equipped = data.equipped === item.itemId; return <div className="panel shop-item" key={item.itemId}><div className="item-art">{item.itemId}</div><h3>{item.name}</h3><p>Cosmetic · Avatar accessory</p><div className="item-buy"><span><Coins size={15}/>{item.price}</span><button disabled={!owned && data.coins < item.price || equipped} className={owned ? 'owned-button' : 'buy-button'} onClick={() => owned ? equip(item.itemId) : buy(item.itemId, item.price)}>{equipped ? 'Equipped' : owned ? 'Equip' : 'Unlock'}</button></div></div> })}</div> : <Empty text="There are no cosmetic items in the database catalog."/>}</div>
+}
+
+function Profile({ data, session, configured, notify, saveName, startFocus: startFocusAction, finishFocus, cancelFocus, signOut, onRefresh }: { data: UserData; session: boolean; configured: boolean; notify: (message: string) => void; saveName: (name: string) => Promise<void>; startFocus: (minutes: number) => Promise<{ id: string; started_at: string; duration_minutes: number } | null>; finishFocus: (id: string | null, minutes: number) => Promise<void>; cancelFocus: (id: string | null) => Promise<void>; signOut: () => Promise<void>; onRefresh: () => void }) {
+  const [tab, setTab] = useState('Profile')
+  const [displayName, setDisplayName] = useState(data.name)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [searchParams] = useSearchParams()
+  useEffect(() => setDisplayName(data.name), [data.name])
+  const authenticate = async (register: boolean) => {
+    if (!supabase) { setAuthError('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to queststudy/.env.local first.'); return }
+    if (!email.trim() || password.length < 6) { setAuthError('Enter a valid email and a password with at least 6 characters.'); return }
+    setAuthError('')
+    const result = register ? await supabase.auth.signUp({ email: email.trim(), password, options: { data: { username: displayName.trim() || 'Scholar' } } }) : await supabase.auth.signInWithPassword({ email: email.trim(), password })
+    if (result.error) setAuthError(result.error.message)
+    else if (register && !result.data.session) setAuthError('Check your email to confirm your account, then log in here.')
+    else { notify(register ? 'Account created and connected.' : 'Welcome back. Loading your saved progress…'); onRefresh() }
+  }
+  return <div className="content"><Heading eyebrow="YOUR PERSONAL SPACE" title={<>Player <span className="gradient-text">profile</span></>} subtitle="Your journey, your stats, your next chapter."/><div className="profile-layout"><div className="profile-main"><section className="panel profile-hero"><div className="profile-cover"><div className="cover-stars">✦　　✧　　 ✦</div></div><div className="profile-details"><div className="profile-avatar">{data.equipped}</div><div className="player-identity"><h2>{data.name}</h2><span>Level {Math.floor(data.xp / 500) + 1} Scholar <i>·</i> QuestStudy player</span></div><button className="outline-button" onClick={() => setTab('Settings')}><Settings size={15}/> Edit profile</button></div><div className="profile-tabs">{['Profile','Statistics','Settings'].map((item) => <button onClick={() => setTab(item)} className={tab === item ? 'selected-tab' : ''} key={item}>{item}</button>)}</div>
+    {tab === 'Settings' ? <div className="settings-panel"><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={32}/></label><button className="primary-button save-profile" onClick={() => void saveName(displayName)}>Save profile</button>{session ? <div className="account-state"><CheckCircle2 size={16}/> Supabase account connected. Your progress syncs automatically.</div> : <><div className="settings-divider">{configured ? 'Connect your Supabase account' : 'Supabase is not configured yet'}</div><label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" type="email" autoComplete="email"/></label><label>Password<input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" type="password" autoComplete="current-password"/></label>{authError && <div className="auth-error">{authError}</div>}<div className="auth-buttons"><button className="primary-button" onClick={() => void authenticate(false)}>Log in</button><button className="outline-button" onClick={() => void authenticate(true)}>Create account</button></div></>}{session && <button className="outline-button" onClick={() => void signOut()}><LogOut size={14}/> Sign out</button>}</div>
+      : tab === 'Statistics' ? <div className="profile-stats"><div><span>QUESTS COMPLETED</span><b>{data.completedTotal}</b></div><div><span>QUIZ ATTEMPTS</span><b>{data.quizCount}</b></div><div><span>FOCUS SESSIONS</span><b>{data.sessions}</b></div><div><span>FOCUS TIME</span><b>{data.focusMinutes} min</b></div></div>
+      : <div className="profile-stats"><div><span>QUESTS COMPLETED</span><b>{data.completedTotal}</b></div><div><span>QUIZ BEST</span><b>{data.quizBest}%</b></div><div><span>FOCUS SESSIONS</span><b>{data.sessions}</b></div><div><span>ACHIEVEMENTS</span><b>{data.achievementIds.length} / {achievementList.length}</b></div></div>}</section>
+      <FocusTimer key={searchParams.get('focus') ?? 'manual'} autoStart={searchParams.get('focus') === '1'} notify={notify} startFocus={startFocusAction} finishFocus={finishFocus} cancelFocus={cancelFocus}/></div>
+    <aside className="profile-aside"><div className="panel level-card"><div className="level-card-top"><div className="level-emblem">{Math.floor(data.xp / 500) + 1}</div><div><span>YOUR RANK</span><b>Scholar</b><small>Level {Math.floor(data.xp / 500) + 1}</small></div></div><div className="progress"><i style={{ width: `${data.xp % 500 / 5}%` }}/></div><div className="level-xp"><span>{data.xp % 500} / 500 XP</span><span>{500 - data.xp % 500} to go</span></div><div className="aside-divider"/><div className="profile-badges">{data.achievementIds.slice(0, 3).map((id) => <span key={id}>{achievementList.find((item) => item.id === id)?.emoji ?? '✦'}</span>)}{data.achievementIds.length < 4 && <span>＋</span>}</div><p>{data.achievementIds.length} achievements unlocked</p></div><div className="panel streak-card"><div><Flame size={20}/><span>YOUR STREAK</span></div><b>{data.streak} <small>days</small></b><p>Complete a quest or focus session to keep it going.</p><div className="streak-days">{['M','T','W','T','F','S','S'].map((day, index) => <span key={`${day}-${index}`}>{day}<b>·</b></span>)}</div></div></aside></div></div>
+}
+
+function FocusTimer({ autoStart, notify, startFocus: startFocusAction, finishFocus, cancelFocus }: { autoStart: boolean; notify: (message: string) => void; startFocus: (minutes: number) => Promise<{ id: string; started_at: string; duration_minutes: number } | null>; finishFocus: (id: string | null, minutes: number) => Promise<void>; cancelFocus: (id: string | null) => Promise<void> }) {
+  const [mode, setMode] = useState<'focus' | 'short' | 'long'>('focus')
+  const [remaining, setRemaining] = useState(25 * 60)
+  const [running, setRunning] = useState(false)
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
+  const duration = mode === 'focus' ? 25 : mode === 'short' ? 5 : 15
+  const begin = async () => {
+    if (running) { setRunning(false); return }
+    if (mode === 'focus' && !sessionId) {
+      setStarting(true)
+      try {
+        const focus = await startFocusAction(duration)
+        if (focus) {
+          setSessionId(focus.id)
+          const elapsed = Math.floor((Date.now() - new Date(focus.started_at).getTime()) / 1000)
+          setRemaining(Math.max(1, focus.duration_minutes * 60 - elapsed))
+        }
+      } catch (error) { notify(error instanceof Error ? error.message : 'Could not start a focus session.'); setStarting(false); return }
+      setStarting(false)
+    }
+    setRunning(true)
+  }
+  useEffect(() => { if (autoStart && !running && !starting) void begin() }, [autoStart])
+  useEffect(() => { if (!running || remaining <= 0) return; const timer = window.setTimeout(() => setRemaining((value) => Math.max(0, value - 1)), 1000); return () => window.clearTimeout(timer) }, [running, remaining])
+  useEffect(() => {
+    if (!running || remaining !== 0) return
+    setRunning(false)
+    if (mode === 'focus') { void finishFocus(sessionId, duration); setSessionId(null) }
+    else notify('Break complete. Ready to focus again?')
+    setRemaining(duration * 60)
+  }, [remaining, running])
+  const reset = async () => { setRunning(false); await cancelFocus(sessionId); setSessionId(null); setRemaining(duration * 60) }
+  const changeMode = async (next: 'focus' | 'short' | 'long') => { await cancelFocus(sessionId); setSessionId(null); setRunning(false); setMode(next); setRemaining((next === 'focus' ? 25 : next === 'short' ? 5 : 15) * 60) }
+  return <div className="panel timer-panel"><div className="timer-title"><div className="focus-icon"><Timer/></div><div><h3>Focus timer</h3><p>Complete a full 25-minute session to earn XP</p></div><span className="tiny-label">POMODORO</span></div><div className="timer-controls"><div className="timer-clock">{String(Math.floor(remaining / 60)).padStart(2, '0')}<small>:{String(remaining % 60).padStart(2, '0')}</small></div><div><button className="primary-button" disabled={starting} onClick={() => void begin()}>{starting ? 'Starting…' : running ? 'Pause Ⅱ' : 'Start ▶'}</button><button className="reset-button" onClick={() => void reset()}>Reset</button></div></div><div className="timer-modes"><button className={mode === 'focus' ? 'active-mode' : ''} onClick={() => void changeMode('focus')}>Focus · 25 min</button><button className={mode === 'short' ? 'active-mode' : ''} onClick={() => void changeMode('short')}>Short break · 5 min</button><button className={mode === 'long' ? 'active-mode' : ''} onClick={() => void changeMode('long')}>Long break · 15 min</button></div></div>
+}
+
+function QuestModal({ initial, subjects, close, save }: { initial: Quest | null; subjects: UserData['subjects']; close: () => void; save: (input: Omit<Quest, 'id' | 'done'>) => void }) {
+  const [title, setTitle] = useState(initial?.title ?? '')
+  const [subject, setSubject] = useState(initial?.subject ?? subjects[0]?.name ?? 'General')
+  const [difficulty, setDifficulty] = useState<Difficulty>(initial?.difficulty ?? 'Medium')
+  const [due, setDue] = useState(initial?.due ?? 'Today')
+  const [error, setError] = useState('')
+  const submit = (event: React.FormEvent) => { event.preventDefault(); if (!title.trim()) { setError('Give your quest a title first.'); return } save({ title: title.trim(), subject, difficulty, due }) }
+  return <div className="modal-backdrop" onClick={close}><form className="quest-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}><div className="modal-top"><div><span className="eyebrow">{initial ? 'UPDATE ADVENTURE' : 'NEW ADVENTURE'}</span><h2>{initial ? 'Edit quest' : 'Create a quest'}</h2></div><button type="button" onClick={close} className="icon-button" aria-label="Close"><X/></button></div><label>Quest title<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Enter a task" maxLength={160}/></label><div className="form-row"><label>Subject<select value={subject} onChange={(event) => setSubject(event.target.value)}>{subjects.map((item) => <option key={item.id}>{item.name}</option>)}{!subjects.length && <option>General</option>}</select></label><label>Deadline<select value={due} onChange={(event) => setDue(event.target.value)}><option>Today</option><option>Tomorrow</option><option>Next week</option><option>{new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(Date.now() + 3 * 86400000))}</option></select></label></div><label>Difficulty<div className="difficulty-options">{(['Easy','Medium','Hard'] as const).map((item) => <button type="button" key={item} className={difficulty === item ? 'difficulty-active' : ''} onClick={() => setDifficulty(item)}>{item}<small>+{item === 'Easy' ? 25 : item === 'Medium' ? 50 : 100} XP</small></button>)}</div></label>{error && <div className="auth-error">{error}</div>}<button className="primary-button modal-submit" type="submit"><Check size={16}/>{initial ? 'Save changes' : 'Add quest'}</button></form></div>
+}
+
 export default App
